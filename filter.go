@@ -7,13 +7,11 @@ import (
 )
 
 // Plan represents a pre‑built copy plan that can be executed later.
-type Plan struct {
+type Plan[D any, S any] struct {
 	Source      string
 	Destination string
 	dstType     reflect.Type
 	srcType     reflect.Type
-	dst         reflect.Value
-	src         reflect.Value
 	instr       instruction // root instruction
 	cfg         *Config     // stored configuration
 }
@@ -68,18 +66,6 @@ func WithTagName(tag string) Option {
 //   - WithDeepCopy enabled, pointers are dereferenced recursively and copied;
 //     otherwise they are assigned directly (shallow).
 func Copy(dst, src interface{}, opts ...Option) error {
-	plan, err := BuildPlan(dst, src, opts...)
-	if err != nil {
-		return err
-	}
-	return plan.Execute()
-}
-
-// BuildPlan analyzes dst and src and builds a copy plan.
-// It performs validation and creates a series of instructions.
-// The plan can be executed multiple times (dst and src must remain valid).
-// BuildPlan validates and builds the copy plan.
-func BuildPlan(dst, src interface{}, opts ...Option) (*Plan, error) {
 	cfg := &Config{TagName: "json"}
 	for _, opt := range opts {
 		opt(cfg)
@@ -87,15 +73,52 @@ func BuildPlan(dst, src interface{}, opts ...Option) (*Plan, error) {
 
 	dstV := reflect.ValueOf(dst)
 	if dstV.Kind() != reflect.Ptr || dstV.IsNil() {
-		return nil, fmt.Errorf("dst must be a non‑nil pointer, got %v", dstV.Kind())
+		return fmt.Errorf("dst must be a non‑nil pointer, got %v", dstV.Kind())
 	}
 	dstVal := dstV.Elem()
 	if !dstVal.CanSet() {
-		return nil, errors.New("dst is not settable")
+		return errors.New("dst is not settable")
 	}
 
-	// dst base type must be struct or slice (after stripping pointers)
 	dstBaseType := dstVal.Type()
+	for dstBaseType.Kind() == reflect.Ptr {
+		dstBaseType = dstBaseType.Elem()
+	}
+	dstBaseKind := dstBaseType.Kind()
+	if dstBaseKind != reflect.Struct && dstBaseKind != reflect.Slice {
+		return fmt.Errorf("dst and src must be structs or slices, got %s", dstBaseKind)
+	}
+
+	srcV := reflect.ValueOf(src)
+	srcBaseType := srcV.Type()
+	for srcBaseType.Kind() == reflect.Ptr {
+		srcBaseType = srcBaseType.Elem()
+	}
+	srcBaseKind := srcBaseType.Kind()
+	if srcBaseKind != reflect.Struct && srcBaseKind != reflect.Slice {
+		return fmt.Errorf("dst and src must be structs or slices, got %s", srcBaseKind)
+	}
+
+	instr, err := buildTypeInstruction(dstVal.Type(), srcV.Type(), cfg)
+	if err != nil {
+		return err
+	}
+	return executeTypeInstruction(instr, dstVal, srcV, cfg)
+}
+
+// BuildPlan analyzes types D and S and builds a copy plan.
+// It performs validation and creates a series of instructions.
+// The plan can be executed multiple times with different dst and src values of type D and S.
+func BuildPlan[D any, S any](opts ...Option) (*Plan[D, S], error) {
+	cfg := &Config{TagName: "json"}
+	for _, opt := range opts {
+		opt(cfg)
+	}
+
+	dstType := reflect.TypeFor[D]()
+	srcType := reflect.TypeFor[S]()
+
+	dstBaseType := dstType
 	for dstBaseType.Kind() == reflect.Ptr {
 		dstBaseType = dstBaseType.Elem()
 	}
@@ -104,9 +127,7 @@ func BuildPlan(dst, src interface{}, opts ...Option) (*Plan, error) {
 		return nil, fmt.Errorf("dst and src must be structs or slices, got %s", dstBaseKind)
 	}
 
-	srcV := reflect.ValueOf(src)
-	// src base type must be struct or slice (after stripping pointers)
-	srcBaseType := srcV.Type()
+	srcBaseType := srcType
 	for srcBaseType.Kind() == reflect.Ptr {
 		srcBaseType = srcBaseType.Elem()
 	}
@@ -115,23 +136,29 @@ func BuildPlan(dst, src interface{}, opts ...Option) (*Plan, error) {
 		return nil, fmt.Errorf("dst and src must be structs or slices, got %s", srcBaseKind)
 	}
 
-	instr, err := buildTypeInstruction(dstVal.Type(), srcV.Type(), cfg)
+	instr, err := buildTypeInstruction(dstType, srcType, cfg)
 	if err != nil {
 		return nil, err
 	}
-	return &Plan{
-		Source:      srcV.Type().String(),
-		Destination: dstV.Type().String(),
-		dstType:     dstVal.Type(),
-		srcType:     srcV.Type(),
-		dst:         dstVal,
-		src:         srcV,
+	return &Plan[D, S]{
+		Source:      srcType.String(),
+		Destination: dstType.String(),
+		dstType:     dstType,
+		srcType:     srcType,
 		instr:       instr,
 		cfg:         cfg,
 	}, nil
 }
 
-// Execute performs the copy according to the plan.
-func (p *Plan) Execute() error {
-	return executeTypeInstruction(p.instr, p.dst, p.src, p.cfg)
+// Execute performs the copy according to the plan for the given dst pointer and src value.
+func (p *Plan[D, S]) Execute(dst *D, src *S) error {
+	if dst == nil {
+		return errors.New("dst must be a non‑nil pointer")
+	}
+	dstV := reflect.ValueOf(dst).Elem()
+	if !dstV.CanSet() {
+		return errors.New("dst is not settable")
+	}
+	srcV := reflect.ValueOf(src)
+	return executeTypeInstruction(p.instr, dstV, srcV, p.cfg)
 }

@@ -93,26 +93,26 @@ err := filter.Copy(&dst, src, filter.WithDeepCopy())
 
 ## High Performance: Pre-Compiled Copy Plans
 
-When executing repetitive copy operations (e.g., inside HTTP handlers or database loops), pre-compile a `Plan` using `BuildPlan`.
+When executing repetitive copy operations (e.g., inside HTTP handlers or database loops), pre-compile a `Plan` using `BuildPlan` with generic destination and source types.
 
 ```go
-// Pre-build plan once during initialization
-plan, err := filter.BuildPlan(&dst, src)
+// Pre-build plan once during initialization for UserDTO (Destination) and User (Source)
+plan, err := filter.BuildPlan[UserDTO, User]()
 if err != nil {
     log.Fatal(err)
 }
 
-// Re-execute plan with minimal allocations (~1,200 ns/op, 2 allocs/op)
-err = plan.Execute()
+// Re-execute plan on target instances for maximum performance
+err = plan.Execute(&dst, src)
 ```
 
 ### Plan Metadata Introspection
 
-Plans expose string type descriptions:
+Plans expose type description strings for source and destination types:
 
 ```go
 fmt.Println(plan.Source)      // "main.User"
-fmt.Println(plan.Destination) // "*main.UserDTO"
+fmt.Println(plan.Destination) // "main.UserDTO"
 ```
 
 ---

@@ -312,20 +312,77 @@ func TestPlan_Execute(t *testing.T) {
 	}
 	src := S{A: 10, B: "hello"}
 	var dst S
-	plan, err := BuildPlan(&dst, src)
+	plan, err := BuildPlan[S, S]()
 	require.NoError(t, err)
 
 	// Execute
-	err = plan.Execute()
+	err = plan.Execute(&dst, &src)
 	require.NoError(t, err)
 	require.Equal(t, S{A: 10, B: "hello"}, dst)
 
-	// Change src and execute again (plan uses same dst, src values are evaluated at plan build time)
+	// Change src and execute again with new src
 	src.A = 99
-	err = plan.Execute()
+	err = plan.Execute(&dst, &src)
 	require.NoError(t, err)
-	// dst should remain 10 because src was captured by value
-	require.Equal(t, 10, dst.A)
+	require.Equal(t, 99, dst.A)
+}
+
+func TestBuildPlan_WithOptionsAndDeepCopy(t *testing.T) {
+	type Inner struct {
+		Val int `custom:"val"`
+	}
+	type Src struct {
+		Inner *Inner `custom:"inner"`
+	}
+	type Dst struct {
+		Inner *Inner `custom:"inner"`
+	}
+	src := Src{Inner: &Inner{Val: 42}}
+	var dst Dst
+
+	plan, err := BuildPlan[Dst, Src](WithTagName("custom"), WithDeepCopy())
+	require.NoError(t, err)
+
+	err = plan.Execute(&dst, &src)
+	require.NoError(t, err)
+	require.NotSame(t, src.Inner, dst.Inner)
+	require.Equal(t, 42, dst.Inner.Val)
+}
+
+func TestBuildPlan_Slice(t *testing.T) {
+	src := []int{10, 20, 30}
+	var dst []int
+
+	plan, err := BuildPlan[[]int, []int]()
+	require.NoError(t, err)
+
+	err = plan.Execute(&dst, &src)
+	require.NoError(t, err)
+	require.Equal(t, src, dst)
+}
+
+func TestBuildPlan_Errors(t *testing.T) {
+	// Non struct or slice type (int)
+	_, err := BuildPlan[int, int]()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "dst and src must be structs or slices")
+
+	// Field type mismatch
+	type Src struct {
+		F int `json:"f"`
+	}
+	type Dst struct {
+		F string `json:"f"`
+	}
+	_, err = BuildPlan[Dst, Src]()
+	require.Error(t, err)
+
+	// Execute with nil dst pointer
+	plan, err := BuildPlan[Src, Src]()
+	require.NoError(t, err)
+	err = plan.Execute(nil, &Src{F: 1})
+	require.Error(t, err)
+	require.EqualError(t, err, "dst must be a non‑nil pointer")
 }
 
 // ---------- Options ----------
@@ -410,12 +467,10 @@ func TestPlan_Metadata(t *testing.T) {
 	type Dst struct {
 		Val int `json:"val"`
 	}
-	src := Src{Val: 10}
-	var dst Dst
-	plan, err := BuildPlan(&dst, src)
+	plan, err := BuildPlan[Dst, Src]()
 	require.NoError(t, err)
 	require.Equal(t, "filter.Src", plan.Source)
-	require.Equal(t, "*filter.Dst", plan.Destination)
+	require.Equal(t, "filter.Dst", plan.Destination)
 }
 
 // ---------- Slice conversion ----------
@@ -423,7 +478,7 @@ func TestPlan_Metadata(t *testing.T) {
 func TestCopy_SliceConversion(t *testing.T) {
 	src := []int{10, 20, 30}
 	var dst []int64
-	err := Copy(&dst, src)
+	err := Copy(&dst, &src)
 	require.NoError(t, err)
 	require.Equal(t, []int64{10, 20, 30}, dst)
 }
@@ -442,7 +497,7 @@ func BenchmarkCopy(b *testing.B) {
 	var dst S
 	b.ResetTimer()
 	for b.Loop() {
-		_ = Copy(&dst, src)
+		_ = Copy(&dst, &src)
 	}
 }
 
@@ -456,12 +511,12 @@ func BenchmarkPlanExecute(b *testing.B) {
 	}
 	src := S{A: 1, B: "test", C: 3.14, D: []int{1, 2, 3}, E: &S{A: 2}}
 	var dst S
-	plan, err := BuildPlan(&dst, src)
+	plan, err := BuildPlan[S, S]()
 	if err != nil {
 		b.Fatal(err)
 	}
 	b.ResetTimer()
 	for b.Loop() {
-		_ = plan.Execute()
+		_ = plan.Execute(&dst, &src)
 	}
 }
