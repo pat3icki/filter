@@ -59,6 +59,25 @@ func main() {
 }
 ```
 
+### Selecting Required Fields into a Map (`Select`)
+
+Use `Select` to dynamically extract specific fields from a struct (or pointer) or a map into a `map[string]any`, with optional exclusion (`ex ...string`):
+
+```go
+// Select required fields from struct minus excluded fields
+srcStruct := User{ID: 1, Name: "Alice", Password: "secretpassword"}
+fields, err := filter.Select([]string{"id", "name", "password"}, &srcStruct, "password")
+// fields: map[id:1 name:Alice]
+
+// Omit required (nil/empty) to select ALL fields except excluded ones
+allMinusRole, err := filter.Select(nil, &srcStruct, "password")
+
+// Select from map with excluded keys
+srcMap := map[string]any{"id": 2, "name": "Bob", "email": "bob@example.com", "role": "admin"}
+fieldsMap, err := filter.Select([]string{"name", "email", "role"}, srcMap, "role")
+// fieldsMap: map[email:bob@example.com name:Bob]
+```
+
 ---
 
 ## Configuration Options
