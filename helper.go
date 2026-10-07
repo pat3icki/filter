@@ -183,7 +183,7 @@ func buildSliceTypeInstruction(dstType, srcType reflect.Type, cfg *Config) (inst
 }
 
 // executeTypeInstruction executes the copy operation using pre-built instructions and current target values.
-func executeTypeInstruction(instr instruction, dst, src reflect.Value, cfg *Config) error {
+func executeTypeInstruction(instr *instruction, dst, src reflect.Value, cfg *Config) error {
 	for src.Kind() == reflect.Ptr && instr.kind != reflect.Ptr {
 		if src.IsNil() {
 			if dst.CanSet() {
@@ -244,7 +244,7 @@ func executeTypeInstruction(instr instruction, dst, src reflect.Value, cfg *Conf
 		elemType := dst.Type().Elem()
 		newDst := reflect.New(elemType).Elem()
 		srcElem := src.Elem()
-		if err := executeTypeInstruction(*instr.ptrInstr, newDst, srcElem, cfg); err != nil {
+		if err := executeTypeInstruction(instr.ptrInstr, newDst, srcElem, cfg); err != nil {
 			return err
 		}
 		ptrVal := newDst.Addr()
@@ -252,7 +252,8 @@ func executeTypeInstruction(instr instruction, dst, src reflect.Value, cfg *Conf
 		return nil
 
 	case reflect.Struct:
-		for _, fi := range instr.fields {
+		for i := range instr.fields {
+			fi := &instr.fields[i]
 			dstFieldVal := dst.FieldByIndex(fi.dstIndex)
 			srcFieldVal := src.FieldByIndex(fi.srcIndex)
 			if err := executeTypeInstruction(fi, dstFieldVal, srcFieldVal, cfg); err != nil {
@@ -267,7 +268,7 @@ func executeTypeInstruction(instr instruction, dst, src reflect.Value, cfg *Conf
 		for i := 0; i < srcLen; i++ {
 			srcElem := src.Index(i)
 			dstElem := newSlice.Index(i)
-			if err := executeTypeInstruction(*instr.elemInstr, dstElem, srcElem, cfg); err != nil {
+			if err := executeTypeInstruction(instr.elemInstr, dstElem, srcElem, cfg); err != nil {
 				return err
 			}
 		}

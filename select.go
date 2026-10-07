@@ -25,63 +25,100 @@ func Select[T any](required []string, src T, ex ...string) (map[string]any, erro
 		val = val.Elem()
 	}
 
-	exceptMap := make(map[string]bool, len(ex))
-	for _, e := range ex {
-		exceptMap[e] = true
+	var exceptMap map[string]bool
+	if len(ex) > 0 {
+		exceptMap = make(map[string]bool, len(ex))
+		for _, e := range ex {
+			exceptMap[e] = true
+		}
 	}
-
-	result := make(map[string]any)
 
 	switch val.Kind() {
 	case reflect.Struct:
 		typ := val.Type()
-		fieldValues := make(map[string]reflect.Value)
-		var allKeys []string
+		numField := typ.NumField()
 
-		for i := 0; i < typ.NumField(); i++ {
-			field := typ.Field(i)
-			if field.PkgPath != "" { // Skip unexported fields
-				continue
-			}
-
-			tag := field.Tag.Get("json")
-			if tag == "-" {
-				continue
-			}
-
-			tagName := strings.Split(tag, ",")[0]
-			key := tagName
-			if key == "" {
-				key = field.Name
-			}
-
-			fieldValues[key] = val.Field(i)
-			fieldValues[field.Name] = val.Field(i)
-			allKeys = append(allKeys, key)
+		capacity := numField
+		if len(required) > 0 {
+			capacity = len(required)
 		}
+		result := make(map[string]any, capacity)
 
-		targetKeys := required
-		if len(targetKeys) == 0 {
-			targetKeys = allKeys
-		}
+		if len(required) == 0 {
+			for i := 0; i < numField; i++ {
+				field := typ.Field(i)
+				if field.PkgPath != "" { // Skip unexported fields
+					continue
+				}
 
-		for _, req := range targetKeys {
-			if exceptMap[req] {
-				continue
+				tag := field.Tag.Get("json")
+				if tag == "-" {
+					continue
+				}
+
+				tagName := tag
+				if idx := strings.IndexByte(tag, ','); idx != -1 {
+					tagName = tag[:idx]
+				}
+				key := tagName
+				if key == "" {
+					key = field.Name
+				}
+
+				if exceptMap != nil && exceptMap[key] {
+					continue
+				}
+				result[key] = val.Field(i).Interface()
 			}
-			if fVal, ok := fieldValues[req]; ok {
-				result[req] = fVal.Interface()
+		} else {
+			for _, req := range required {
+				if exceptMap != nil && exceptMap[req] {
+					continue
+				}
+				found := false
+				for i := 0; i < numField; i++ {
+					field := typ.Field(i)
+					if field.PkgPath != "" {
+						continue
+					}
+					tag := field.Tag.Get("json")
+					if tag == "-" {
+						continue
+					}
+					tagName := tag
+					if idx := strings.IndexByte(tag, ','); idx != -1 {
+						tagName = tag[:idx]
+					}
+					key := tagName
+					if key == "" {
+						key = field.Name
+					}
+
+					if key == req || field.Name == req {
+						result[req] = val.Field(i).Interface()
+						found = true
+						break
+					}
+				}
+				_ = found
 			}
 		}
+		return result, nil
 
 	case reflect.Map:
 		if val.IsNil() {
-			return result, nil
+			return make(map[string]any), nil
 		}
+
+		capacity := val.Len()
+		if len(required) > 0 {
+			capacity = len(required)
+		}
+		result := make(map[string]any, capacity)
 
 		if len(required) > 0 {
 			for _, req := range required {
-				if exceptMap[req] {
+				if exceptMap != nil && exceptMap[req] {
 					continue
 				}
 				mapKey := reflect.ValueOf(req)
@@ -94,7 +131,13 @@ func Select[T any](required []string, src T, ex ...string) (map[string]any, erro
 				}
 
 				for _, k := range val.MapKeys() {
-					if fmt.Sprint(k.Interface()) == req {
+					var kStr string
+					if k.Kind() == reflect.String {
+						kStr = k.String()
+					} else {
+						kStr = fmt.Sprint(k.Interface())
+					}
+					if kStr == req {
 						result[req] = val.MapIndex(k).Interface()
 						break
 					}
@@ -102,17 +145,21 @@ func Select[T any](required []string, src T, ex ...string) (map[string]any, erro
 			}
 		} else {
 			for _, k := range val.MapKeys() {
-				keyStr := fmt.Sprint(k.Interface())
-				if exceptMap[keyStr] {
+				var keyStr string
+				if k.Kind() == reflect.String {
+					keyStr = k.String()
+				} else {
+					keyStr = fmt.Sprint(k.Interface())
+				}
+				if exceptMap != nil && exceptMap[keyStr] {
 					continue
 				}
 				result[keyStr] = val.MapIndex(k).Interface()
 			}
 		}
+		return result, nil
 
 	default:
 		return nil, fmt.Errorf("src must be a struct or map (or pointer to them), got %s", val.Kind())
 	}
-
-	return result, nil
 }

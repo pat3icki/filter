@@ -103,7 +103,7 @@ func Copy(dst, src interface{}, opts ...Option) error {
 	if err != nil {
 		return err
 	}
-	return executeTypeInstruction(instr, dstVal, srcV, cfg)
+	return executeTypeInstruction(&instr, dstVal, srcV, cfg)
 }
 
 // BuildPlan analyzes types D and S and builds a copy plan.
@@ -160,5 +160,5 @@ func (p *Plan[D, S]) Execute(dst *D, src *S) error {
 		return errors.New("dst is not settable")
 	}
 	srcV := reflect.ValueOf(src)
-	return executeTypeInstruction(p.instr, dstV, srcV, p.cfg)
+	return executeTypeInstruction(&p.instr, dstV, srcV, p.cfg)
 }
